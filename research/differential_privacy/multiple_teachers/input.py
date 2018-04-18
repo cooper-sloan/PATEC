@@ -17,7 +17,7 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
-import cPickle
+import _pickle
 import gzip
 import math
 import numpy as np
@@ -125,7 +125,7 @@ def extract_svhn(local_url):
   :return:
   """
 
-  with tf.gfile.Open(local_url, mode='r') as file_obj:
+  with tf.gfile.Open(local_url, mode='rb') as file_obj:
     # Load MATLAB matrix using scipy IO
     dict = loadmat(file_obj)
 
@@ -155,7 +155,7 @@ def unpickle_cifar_dic(file):
   :return: tuple of (images, labels)
   """
   fo = open(file, 'rb')
-  dict = cPickle.load(fo)
+  dict = _pickle.load(fo, encoding='latin1')
   fo.close()
   return dict['data'], dict['labels']
 
