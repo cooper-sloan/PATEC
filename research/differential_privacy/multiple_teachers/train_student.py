@@ -22,19 +22,20 @@ import numpy as np
 from six.moves import xrange
 import tensorflow as tf
 
-from differential_privacy.multiple_teachers import aggregation
-from differential_privacy.multiple_teachers import deep_cnn
-from differential_privacy.multiple_teachers import input
-from differential_privacy.multiple_teachers import metrics
+import aggregation
+import deep_cnn
+# import deep_recommender
+import input
+import metrics
 
 FLAGS = tf.flags.FLAGS
 
 tf.flags.DEFINE_string('dataset', 'svhn', 'The name of the dataset to use')
 tf.flags.DEFINE_integer('nb_labels', 10, 'Number of output classes')
 
-tf.flags.DEFINE_string('data_dir','/tmp','Temporary storage')
-tf.flags.DEFINE_string('train_dir','/tmp/train_dir','Where model chkpt are saved')
-tf.flags.DEFINE_string('teachers_dir','/tmp/train_dir',
+tf.flags.DEFINE_string('data_dir','/data','Temporary storage')
+tf.flags.DEFINE_string('train_dir','/data/student_dir','Where model chkpt are saved')
+tf.flags.DEFINE_string('teachers_dir','/data/train_dir',
                        'Directory where teachers checkpoints are stored.')
 
 tf.flags.DEFINE_integer('teachers_max_steps', 3000,
@@ -45,7 +46,7 @@ tf.flags.DEFINE_integer('stdnt_share', 1000,
                         'Student share (last index) of the test data')
 tf.flags.DEFINE_integer('lap_scale', 10,
                         'Scale of the Laplacian noise added for privacy')
-tf.flags.DEFINE_boolean('save_labels', False,
+tf.flags.DEFINE_boolean('save_labels', True,
                         'Dump numpy arrays of labels and clean teacher votes')
 tf.flags.DEFINE_boolean('deeper', False, 'Activate deeper CNN model')
 
@@ -70,6 +71,11 @@ def ensemble_preds(dataset, nb_teachers, stdnt_data):
   # Create array that will hold result
   result = np.zeros(result_shape, dtype=np.float32)
 
+  if dataset == "netflix":
+    preds_func = deep_recommender.softmax_preds
+  else:
+    preds_func = deep_cnn.softmax_preds
+
   # Get predictions from each teacher
   for teacher_id in xrange(nb_teachers):
     # Compute path of checkpoint file for teacher model with ID teacher_id
@@ -79,7 +85,7 @@ def ensemble_preds(dataset, nb_teachers, stdnt_data):
       ckpt_path = FLAGS.teachers_dir + '/' + str(dataset) + '_' + str(nb_teachers) + '_teachers_' + str(teacher_id) + '.ckpt-' + str(FLAGS.teachers_max_steps - 1)  # NOLINT(long-line)
 
     # Get predictions on our training data and store in result array
-    result[teacher_id] = deep_cnn.softmax_preds(stdnt_data, ckpt_path)
+    result[teacher_id] = preds_func(stdnt_data, ckpt_path)
 
     # This can take a while when there are a lot of teachers so output status
     print("Computed Teacher " + str(teacher_id) + " softmax predictions")
@@ -87,7 +93,7 @@ def ensemble_preds(dataset, nb_teachers, stdnt_data):
   return result
 
 
-def prepare_student_data(dataset, nb_teachers, save=False):
+def prepare_student_data(dataset, nb_teachers, save=True):
   """
   Takes a dataset name and the size of the teacher ensemble and prepares
   training data for the student model, according to parameters indicated
@@ -109,6 +115,10 @@ def prepare_student_data(dataset, nb_teachers, save=False):
     test_data, test_labels = input.ld_cifar10(test_only=True)
   elif dataset == 'mnist':
     test_data, test_labels = input.ld_mnist(test_only=True)
+  elif dataset == 'faces':
+    test_data, test_labels = input.ld_faces(test_only=True)
+  elif dataset == 'wiki':
+    test_data, test_labels = input.ld_wiki(test_only=True)
   else:
     print("Check value of dataset flag")
     return False

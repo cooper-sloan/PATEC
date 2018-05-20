@@ -17,7 +17,13 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
+from skimage.transform import resize
+from random import random
 import _pickle
+from scipy import misc
+from scipy import io
+from skimage import color
+import glob
 import gzip
 import math
 import numpy as np
@@ -217,7 +223,7 @@ def extract_cifar10(local_url, data_dir):
     labels = []
     for file in train_files:
       # Construct filename
-      filename = data_dir + "/cifar-10-batches-py/" + file
+      filename = file
 
       # Unpickle dictionary and extract images and labels
       images_tmp, labels_tmp = unpickle_cifar_dic(filename)
@@ -252,6 +258,70 @@ def extract_cifar10(local_url, data_dir):
 
   return train_data, train_labels, test_data, test_labels
 
+# Data from http://cswww.essex.ac.uk/mv/allfaces/faces95.html
+def extract_faces(data_dir):
+  preprocessed_files = ['/faces_train.npy',
+                        '/faces_train_labels.npy',
+                        '/faces_test.npy',
+                        '/faces_test_labels.npy']
+
+  all_preprocessed = True
+  for file in preprocessed_files:
+    if not tf.gfile.Exists(data_dir + file):
+      all_preprocessed = False
+      break
+
+  # if False:
+  if all_preprocessed:
+    # Reload pre-processed training data from numpy dumps
+    train_data = np.load(data_dir + preprocessed_files[0])
+    train_labels = np.load(data_dir + preprocessed_files[1])
+
+    # Reload pre-processed testing data from numpy dumps
+    test_data = np.load(data_dir + preprocessed_files[2])
+    test_labels = np.load(data_dir + preprocessed_files[3])
+
+  else:
+    # Do everything from scratch
+    # Define lists of all files we should extract
+    train_files = glob.iglob("/home/Cooper/faces95/*")
+
+    # Load training images and labels
+    images = []
+    labels = []
+    test_images = []
+    test_labels = []
+    for label,person in enumerate(train_files):
+      pictures = list(glob.iglob(person+"/*"))
+      for picture in pictures[0:15]:
+          images.append(resize(misc.imread(picture),(30,30)))
+          labels.append(label)
+      for picture in pictures[15:20]:
+         test_images.append(resize(misc.imread(picture),(30,30)))
+         test_labels.append(label)
+    p = np.random.permutation(len(images))
+    images = np.put(np.zeros(len(images)),p,images)
+    labels = np.put(np.zeros(len(images)),p,labels)
+    # Convert to numpy arrays and reshape in the expected format
+    train_data = np.asarray(images, dtype=np.float32).reshape((72*15,3,30,30))
+    train_data = np.swapaxes(train_data, 1, 3)
+    train_labels = np.asarray(labels, dtype=np.int32).reshape(72*15)
+
+    # Save so we don't have to do this again
+    np.save(data_dir + preprocessed_files[0], train_data)
+    np.save(data_dir + preprocessed_files[1], train_labels)
+
+    # Convert to numpy arrays and reshape in the expected format
+    test_data = np.asarray(test_images,dtype=np.float32).reshape((72*5,3,30,30))
+    test_data = np.swapaxes(test_data, 1, 3)
+    test_labels = np.asarray(test_labels, dtype=np.int32).reshape(72*5)
+
+    # Save so we don't have to do this again
+    np.save(data_dir + preprocessed_files[2], test_data)
+    np.save(data_dir + preprocessed_files[3], test_labels)
+
+  return train_data, train_labels, test_data, test_labels
+
 
 def extract_mnist_data(filename, num_images, image_size, pixel_depth):
   """
@@ -267,7 +337,7 @@ def extract_mnist_data(filename, num_images, image_size, pixel_depth):
       data = np.frombuffer(buf, dtype=np.uint8).astype(np.float32)
       data = (data - (pixel_depth / 2.0)) / pixel_depth
       data = data.reshape(num_images, image_size, image_size, 1)
-      np.save(filename, data)
+      #np.save(filename, data)
       return data
   else:
     with tf.gfile.Open(filename+".npy", mode='r') as file_obj:
@@ -284,11 +354,49 @@ def extract_mnist_labels(filename, num_images):
       bytestream.read(8)
       buf = bytestream.read(1 * num_images)
       labels = np.frombuffer(buf, dtype=np.uint8).astype(np.int32)
-      np.save(filename, labels)
+      #np.save(filename, labels)
     return labels
   else:
     with tf.gfile.Open(filename+".npy", mode='r') as file_obj:
       return np.load(file_obj)
+
+def extract_netflix(data_dir):
+  preprocessed_files = ['/netflix_train.npy',
+			'/netflix_train_labels.npy',
+			'/netflix_valid.npy',
+			'/netflix_valid_labels.npy',
+			'/netflix_test.npy',
+			'/netflix_test_labels.npy']
+  all_preprocessed = True
+  for file in preprocessed_files:
+    if not tf.gfile.Exists(data_dir + file):
+      all_preprocessed = False
+      break
+
+  if all_preprocessed:
+    #Reload pre-processed training data from numpy dumps
+    train_data = np.load(data_dir + preprocessed_files[0])
+    train_labels = np.load(data_dir + preprocessed_files[1])
+
+    #Reload pre-processed validation data from numpy dumps
+    valid_data = np.load(data_dir + preprocessed_files[2])
+    valid_data = np.load(data_dir + preprocessed_files[3])
+
+    #Reload pre-processed testing data from numpy dumps
+    test_data = np.load(data_dir + preprocessed_files[4])
+    test_data = np.load(data_dir + preprocessed_files[5])
+
+  else:
+    #Do all pre-processing from scratch
+    train_file_path = "/home/logan_ford16/models/research/differential_privacy/multiple_teachers/DeepRecommender/Netflix/N3M_TRAIN/n3m.train.txt"
+    valid_file_path = "/home/logan_ford16/models/research/differential_privacy/multiple_teachers/DeepRecommender/Netflix/N3M_VALID/n3m.valid.txt"
+    test_file_path = "/home/logan_ford16/models/research/differential_privacy/multiple_teachers/DeepRecommender/Netflix/N3M_TEST/n3m.test.txt"
+
+    with open(train_file_path, 'r') as src:
+      for line in src.readlines():
+        parts = line.strip().split('\t')
+        if len(parts) < 3:
+          raise ValueError('Encountered badly formatted line in {}'.format(train_file_path))
 
 
 def ld_svhn(extended=False, test_only=False):
@@ -393,6 +501,164 @@ def ld_mnist(test_only=False):
   else:
     return train_data, train_labels, test_data, test_labels
 
+def extract_wiki(data_dir):
+  preprocessed_files = ['/wiki_train.npy',
+                        '/wiki_train_labels.npy',
+                        '/wiki_test.npy',
+                        '/wiki_test_labels.npy']
+
+  all_preprocessed = True
+  for file in preprocessed_files:
+    if not tf.gfile.Exists(data_dir + file):
+      all_preprocessed = False
+      break
+
+  # if False:
+  if all_preprocessed:
+    # Reload pre-processed training data from numpy dumps
+    train_data = np.load(data_dir + preprocessed_files[0])
+    train_labels = np.load(data_dir + preprocessed_files[1])
+
+    # Reload pre-processed testing data from numpy dumps
+    test_data = np.load(data_dir + preprocessed_files[2])
+    test_labels = np.load(data_dir + preprocessed_files[3])
+
+  else:
+    # Do everything from scratch
+    # Define lists of all files we should extract
+
+    # Load training images and labels
+    images = []
+    labels = []
+    test_images = []
+    test_labels = []
+    m = io.loadmat("/home/Cooper/wiki_crop/wiki.mat")
+    n = len(m["wiki"]["full_path"][0][0][0])
+    for i,file in enumerate(m["wiki"]["full_path"][0][0][0]):
+      # if i > 10:
+          # break
+      print(i,n)
+      picture = "/home/Cooper/wiki_crop/"+file[0]
+      proportion = 0.8
+      r = random()
+      im = resize(color.rgb2gray(misc.imread(picture)),(256,256))
+      label = m["wiki"]["gender"][0][0][0][i]
+      if not math.isnan(label):
+        if r < proportion:
+          images.append(im)
+          labels.append(int(label))
+        else:
+          test_images.append(im)
+          test_labels.append(int(label))
+
+    # p = np.random.permutation(len(images))
+    # images = np.put(np.zeros(len(images)),p,images)
+    # labels = np.put(np.zeros(len(images)),p,labels)
+    # Convert to numpy arrays and reshape in the expected format
+
+    train_data = np.asarray(images, dtype=np.float32).reshape((len(labels),256,256,1))
+    # train_data = np.swapaxes(train_data, 1, 3)
+    train_labels = np.asarray(labels, dtype=np.int32).reshape(len(labels))
+
+    # Save so we don't have to do this again
+    np.save(data_dir + preprocessed_files[0], train_data)
+    np.save(data_dir + preprocessed_files[1], train_labels)
+
+    # Convert to numpy arrays and reshape in the expected format
+    test_data = np.asarray(test_images,dtype=np.float32).reshape((len(test_labels),256,256,1))
+    # test_data = np.swapaxes(test_data, 1, 3)
+    test_labels = np.asarray(test_labels, dtype=np.int32).reshape(len(test_labels))
+
+    # Save so we don't have to do this again
+    np.save(data_dir + preprocessed_files[2], test_data)
+    np.save(data_dir + preprocessed_files[3], test_labels)
+
+  return train_data, train_labels, test_data, test_labels
+
+def extract_imdb(data_dir):
+  preprocessed_files = ['/imdb_train.npy',
+                        '/imdb_train_labels.npy',
+                        '/imdb_test.npy',
+                        '/imdb_test_labels.npy']
+
+  all_preprocessed = True
+  for file in preprocessed_files:
+    if not tf.gfile.Exists(data_dir + file):
+      all_preprocessed = False
+      break
+  if all_preprocessed:
+    # Reload pre-processed training data from numpy dumps
+    train_data = np.load(data_dir + preprocessed_files[0])
+    train_labels = np.load(data_dir + preprocessed_files[1])
+
+    # Reload pre-processed testing data from numpy dumps
+    test_data = np.load(data_dir + preprocessed_files[2])
+    test_labels = np.load(data_dir + preprocessed_files[3])
+
+  else:
+    images = []
+    labels = []
+    test_images = []
+    test_labels = []
+    m = io.loadmat("/data/imdb_crop/imdb.mat")
+    n = len(m["imdb"]["full_path"][0][0][0])
+    for i,file in enumerate(m["imdb"]["full_path"][0][0][0]):
+      if i%100 == 0:
+        print(i,n)
+      picture = "/data/imdb_crop/"+file[0]
+      proportion = 0.8
+      r = random()
+      im = resize(color.rgb2gray(misc.imread(picture)),(100,100))
+      label = m["imdb"]["gender"][0][0][0][i]
+      if not math.isnan(label):
+        if r < proportion:
+          images.append(im)
+          labels.append(int(label))
+        else:
+          test_images.append(im)
+          test_labels.append(int(label))
+
+    # p = np.random.permutation(len(images))
+    # images = np.put(np.zeros(len(images)),p,images)
+    # labels = np.put(np.zeros(len(images)),p,labels)
+    # Convert to numpy arrays and reshape in the expected format
+
+    train_data = np.asarray(images, dtype=np.float32).reshape((len(labels),100,100,1))
+    # train_data = np.swapaxes(train_data, 1, 3)
+    train_labels = np.asarray(labels, dtype=np.int32).reshape(len(labels))
+
+    # Save so we don't have to do this again
+    np.save(data_dir + preprocessed_files[0], train_data)
+    np.save(data_dir + preprocessed_files[1], train_labels)
+
+    # Convert to numpy arrays and reshape in the expected format
+    test_data = np.asarray(test_images,dtype=np.float32).reshape((len(test_labels),100,100,1))
+    # test_data = np.swapaxes(test_data, 1, 3)
+    test_labels = np.asarray(test_labels, dtype=np.int32).reshape(len(test_labels))
+
+    # Save so we don't have to do this again
+    np.save(data_dir + preprocessed_files[2], test_data)
+    np.save(data_dir + preprocessed_files[3], test_labels)
+
+  return train_data, train_labels, test_data, test_labels
+
+def ld_imdb(test_only=False):
+    train_data, train_labels, test_data, test_labels = extract_imdb("/data/imdb_crop")
+    if test_only:
+        return test_data, test_labels
+    return train_data, train_labels, test_data, test_labels
+
+def ld_wiki(test_only=False):
+    train_data, train_labels, test_data, test_labels = extract_wiki("/home/logan_ford16/wiki")
+    if test_only:
+        return test_data, test_labels
+    return train_data, train_labels, test_data, test_labels
+
+def ld_faces(test_only=False):
+    train_data, train_labels, test_data, test_labels = extract_faces("/home/logan_ford16/faces")
+    if test_only:
+        return test_data, test_labels
+    return train_data, train_labels, test_data, test_labels
 
 def partition_dataset(data, labels, nb_teachers, teacher_id):
   """
@@ -422,3 +688,4 @@ def partition_dataset(data, labels, nb_teachers, teacher_id):
   partition_labels = labels[start:end]
 
   return partition_data, partition_labels
+

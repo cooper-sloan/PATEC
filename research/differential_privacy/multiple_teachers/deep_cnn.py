@@ -29,10 +29,10 @@ import utils
 FLAGS = tf.app.flags.FLAGS
 
 # Basic model parameters.
-tf.app.flags.DEFINE_integer('dropout_seed', 123, """seed for dropout.""")
-tf.app.flags.DEFINE_integer('batch_size', 128, """Nb of images in a batch.""")
-tf.app.flags.DEFINE_integer('epochs_per_decay', 350, """Nb epochs per decay""")
-tf.app.flags.DEFINE_integer('learning_rate', 5, """100 * learning rate""")
+tf.app.flags.DEFINE_integer('dropout_seed', 1234, """seed for dropout.""")
+tf.app.flags.DEFINE_integer('batch_size', 10, """Nb of images in a batch.""")
+tf.app.flags.DEFINE_integer('epochs_per_decay', 150, """Nb epochs per decay""")
+tf.app.flags.DEFINE_integer('learning_rate', 1, """100 * learning rate""")
 tf.app.flags.DEFINE_boolean('log_device_placement', False, """see TF doc""")
 
 
@@ -89,7 +89,7 @@ def inference(images, dropout=False):
   Returns:
     Logits
   """
-  if FLAGS.dataset == 'mnist':
+  if FLAGS.dataset == 'mnist' or FLAGS.dataset == "wiki" or FLAGS.dataset == "imdb":
     first_conv_shape = [5, 5, 1, 64]
   else:
     first_conv_shape = [5, 5, 3, 64]
@@ -199,7 +199,7 @@ def inference_deeper(images, dropout=False):
   Returns:
     Logits
   """
-  if FLAGS.dataset == 'mnist':
+  if FLAGS.dataset == 'mnist' or FLAGS.dataset == 'wiki' or FLAGS.dataset == "imdb":
     first_conv_shape = [3, 3, 1, 96]
   else:
     first_conv_shape = [3, 3, 3, 96]
@@ -346,6 +346,7 @@ def loss_fun(logits, labels):
 
   # Calculate the average cross entropy loss across the batch.
   cross_entropy_mean = tf.reduce_mean(cross_entropy, name='cross_entropy')
+  tf.summary.scalar('cross_entropy',cross_entropy_mean)
 
   # Add to TF collection for losses
   tf.add_to_collection('losses', cross_entropy_mean)
@@ -441,6 +442,12 @@ def _input_placeholder():
 
   # Declare data placeholder
   train_node_shape = (FLAGS.batch_size, image_size, image_size, num_channels)
+  if FLAGS.dataset == 'faces':
+      train_node_shape = (FLAGS.batch_size, 200, 180, num_channels)
+  if FLAGS.dataset == 'wiki':
+      train_node_shape = (FLAGS.batch_size, 100, 100, 1)
+  if FLAGS.dataset == 'imdb':
+      train_node_shape = (FLAGS.batch_size, 100, 100, 1)
   return tf.placeholder(tf.float32, shape=train_node_shape)
 
 
@@ -480,6 +487,7 @@ def train(images, labels, ckpt_path, dropout=False):
 
     # Calculate loss
     loss = loss_fun(logits, train_labels_node)
+    tf.summary.scalar('loss',loss)
 
     # Build a Graph that trains the model with one batch of examples and
     # updates the model parameters.
@@ -492,9 +500,13 @@ def train(images, labels, ckpt_path, dropout=False):
 
     # Build an initialization operation to run below.
     init = tf.global_variables_initializer()
+    merged = tf.summary.merge_all()
+
 
     # Create and init sessions
     sess = tf.Session(config=tf.ConfigProto(log_device_placement=FLAGS.log_device_placement)) #NOLINT(long-line)
+    train_writer = tf.summary.FileWriter('/data/summary/train', sess.graph)
+    test_writer = tf.summary.FileWriter('data/summary/test')
     sess.run(init)
 
     print("Session ready, beginning training loop")
@@ -518,7 +530,12 @@ def train(images, labels, ckpt_path, dropout=False):
                    train_labels_node: labels[start:end]}
 
       # Run training step
-      _, loss_value = sess.run([train_op, loss], feed_dict=feed_dict)
+      if step % 10 == 0:
+        summary, _, loss_value = sess.run([merged, train_op, loss], feed_dict=feed_dict)
+        train_writer.add_summary(summary, step)
+      else:
+        _, loss_value = sess.run([train_op, loss], feed_dict=feed_dict)
+
 
       # Compute duration of training step
       duration = time.time() - start_time
@@ -538,7 +555,7 @@ def train(images, labels, ckpt_path, dropout=False):
                              examples_per_sec, sec_per_batch))
 
       # Save the model checkpoint periodically.
-      if step % 1000 == 0 or (step + 1) == FLAGS.max_steps:
+      if (step + 1) == FLAGS.max_steps:
         saver.save(sess, ckpt_path, global_step=step)
 
   return True
@@ -601,3 +618,4 @@ def softmax_preds(images, ckpt_path, return_logits=False):
   tf.reset_default_graph()
 
   return preds
+

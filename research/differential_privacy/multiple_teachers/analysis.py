@@ -44,7 +44,7 @@ import numpy as np
 from six.moves import xrange
 import tensorflow as tf
 
-from differential_privacy.multiple_teachers.input import maybe_download
+from input import maybe_download
 
 # These parameters can be changed to compute bounds for different failure rates
 # or different model predictions.
@@ -177,6 +177,7 @@ def sens_at_k(counts, noise_eps, l, k):
   # Now we can assume that at k, gap remains positive
   # or we have reached the point where logmgf_exact is
   # determined by the first term and ind of q.
+
   if counts[0] < counts[1] + k:
     return 0
   counts_sorted[0] -= k
@@ -242,6 +243,7 @@ def main(unused_argv):
       for j in range(num_teachers):
         counts_mat[i, input_mat[j, i]] += 1
   n = counts_mat.shape[0]
+  print(n)
   num_examples = min(n, FLAGS.max_examples)
 
   if not FLAGS.indices_file:

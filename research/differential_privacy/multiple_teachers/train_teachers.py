@@ -21,15 +21,16 @@ from __future__ import print_function
 import tensorflow as tf
 
 import deep_cnn
+# import deep_recommender
 import input
 import metrics
-
+import numpy
 
 tf.flags.DEFINE_string('dataset', 'svhn', 'The name of the dataset to use')
 tf.flags.DEFINE_integer('nb_labels', 10, 'Number of output classes')
 
-tf.flags.DEFINE_string('data_dir','/tmp','Temporary storage')
-tf.flags.DEFINE_string('train_dir','/tmp/train_dir',
+tf.flags.DEFINE_string('data_dir','/data','Temporary storage')
+tf.flags.DEFINE_string('train_dir','/data/train_dir',
                        'Where model ckpt are saved')
 
 tf.flags.DEFINE_integer('max_steps', 3000, 'Number of training steps to run.')
@@ -61,6 +62,15 @@ def train_teacher(dataset, nb_teachers, teacher_id):
     train_data, train_labels, test_data, test_labels = input.ld_cifar10()
   elif dataset == 'mnist':
     train_data, train_labels, test_data, test_labels = input.ld_mnist()
+  elif dataset == 'faces':
+    train_data, train_labels, test_data, test_labels = input.ld_faces()
+  elif dataset == 'wiki':
+    train_data, train_labels, test_data, test_labels = input.ld_wiki()
+  elif dataset == 'imdb':
+    train_data, train_labels, test_data, test_labels = input.ld_imdb()
+  elif dataset == 'netflix':
+    deep_recommender.train_teacher(nb_teachers, teacher_id)
+    return True
   else:
     print("Check value of dataset flag")
     return False
@@ -94,7 +104,6 @@ def train_teacher(dataset, nb_teachers, teacher_id):
   print('Precision of teacher after training: ' + str(precision))
 
   return True
-
 
 def main(argv=None):  # pylint: disable=unused-argument
   # Make a call to train_teachers with values specified in flags
