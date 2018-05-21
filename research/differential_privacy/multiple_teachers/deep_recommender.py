@@ -16,6 +16,7 @@ from pathlib import Path
 from math import sqrt, floor
 import numpy as np
 import os
+import gc
 from os import listdir, path
 
 config = configparser.ConfigParser()
@@ -35,38 +36,100 @@ print(config)
 
 params = dict()
 params['batch_size'] = config['batch_size']
-params['data_dir'] = config['path_to_train_data']
 params['major'] = 'users'
 params['itemIdInd'] = 1
 params['userIdInd'] = 0
-print("Loading Src Data")
-with open('userIdMap.dict', 'rb') as f:
-  userIdMap = pickle.load(f)
-with open('itemIdMap.dict', 'rb') as f:
-  itemIdMap = pickle.load(f)
 
-#src_data_layer = input_layer.UserItemRecDataProvider(params=params)
-#itemIdMap = src_data_layer.itemIdMap
-#userIdMap = src_data_layer.userIdMap
+maps_loaded = False
+userIdMap = None
+itemIdMap = None
+src_data_layer_loaded = False
+src_data_layer = None
+stud_train_data_layer_loaded = False
+stud_train_data_layer = None
+stud_eval_data_layer_loaded = False
+stud_eval_data_layer = None
 
-#with open('userIdMap.dict', 'wb') as f:
-#  userIdMap = pickle.dump(userIdMap, f)
-#with open('itemIdMap.dict', 'wb') as f:
-#  itemIdMap = pickle.dump(itemIdMap, f)
-#print("Done saving maps")
-#exit()
+def load_maps():
+  global maps_loaded, userIdMap, itemIdMap
+  if maps_loaded:
+    print("Maps already loaded!")
+    return None
+
+  if os.path.isfile('maps/userIdMap.dict'):
+    with open('maps/userIdMap.dict', 'rb') as f:
+      userIdMap = pickle.load(f)
+    with open('maps/itemIdMap.dict', 'rb') as f:
+      itemIdMap = pickle.load(f)
+    maps_loaded = True
+  else:
+    print("maps not saved")
+
+def load_src_data_layer(with_maps=False, save_maps=False):
+  global src_data_layer_loaded, src_data_layer, userIdMap, itemIdMap
+  if src_data_layer_loaded:
+    print("src_data_layer already loaded!")
+    return None
+
+  params['data_dir'] = config['path_to_train_data']
+
+  if with_maps:
+    src_data_layer = input_layer.UserItemRecDataProvider(params=params,
+                                                         item_id_map = itemIdMap,
+                                                         user_id_map = userIdMap)
+  else:
+    src_data_layer = input_layer.UserItemRecDataProvider(params=params)
+    userIdMap = src_data_layer.userIdMap
+    itemIdMap = src_data_layer.itemIdMap
+    maps_loaded = True
+
+    if save_maps:
+      with open('maps/userIdMap.dict', 'wb') as f:
+        userIdMap = pickle.dump(userIdMap, f)
+      with open('maps/itemIdMap.dict', 'wb') as f:
+        itemIdMap = pickle.dump(itemIdMap, f)
+      print("Done saving maps")
+
+  src_data_layer_loaded = True
 
 
-params['data_dir'] = config['path_to_stud_train_data']
-stud_train_data_layer = input_layer.UserItemRecDataProvider(params=params,
-                                                            user_id_map=userIdMap,
-                                                            item_id_map=itemIdMap)
-params['data_dir'] = config['path_to_stud_eval_data']
-stud_eval_data_layer = input_layer.UserItemRecDataProvider(params=params,
-                                                           user_id_map=userIdMap,
-                                                           item_id_map=itemIdMap)
-#stud_train_data_layer.src_data = src_data_layer.data
-#stud_eval_data_layer.src_data = src_data_layer.data
+def load_train_data_layer():
+  global stud_train_data_layer_loaded, stud_train_data_layer
+  if stud_train_data_layer_loaded:
+    print("stud_train_data_layer already loaded!")
+    return None
+
+  params['data_dir'] = config['path_to_stud_train_data']
+  if not (userIdMap and itemIdMap):
+    print("maps not loaded; please load maps")
+    return None
+  else:
+    stud_train_data_layer = input_layer.UserItemRecDataProvider(params=params,
+                                                                user_id_map=userIdMap,
+                                                                item_id_map=itemIdMap)
+    stud_train_data_layer_loaded = True
+
+    if src_data_layer:
+      stud_train_data_layer.src_data = src_data_layer.data
+
+def load_eval_data_layer():
+  global stud_eval_data_layer_loaded, stud_eval_data_layer
+  if stud_eval_data_layer_loaded:
+    print("stud_eval_data_layer already loaded!")
+    return None
+
+  params['data_dir'] = config['path_to_stud_eval_data']
+  if not (userIdMap and itemIdMap):
+    print("maps not loaded; please load maps")
+    return None
+  else:
+    stud_eval_data_layer = input_layer.UserItemRecDataProvider(params=params,
+                                                               user_id_map=userIdMap,
+                                                               item_id_map=itemIdMap)
+    stud_eval_data_layer_loaded = True
+    if src_data_layer:
+      stud_eval_data_layer.src_data = src_data_layer.data
+
 
 logger = Logger(config['logdir'])
 
@@ -116,178 +179,18 @@ def log_var_and_grad_summaries(logger, layers, global_step, prefix, log_histogra
       logger.histo_summary(tag="Gradients/{}_{}".format(prefix, ind), values=w.grad.data.cpu().numpy(),
                          step=global_step)
 
-def train_teacher(nb_teachers, teacher_id):
-  '''
-    Very similar to code from DeepRecommender/run.py
-  '''
-  nf_data_dir = config['path_to_train_data']
-  nf_eval_data_dir = config['path_to_eval_data']
+def teacher_preds(model_path, teacher_id):
 
-  all_files = [path.join(nf_data_dir, f) for f in listdir(nf_data_dir)
-                  if path.isfile(path.join(nf_data_dir, f)) and f.endswith('.txt')]
-  chunk_size = floor(len(all_files)/nb_teachers)
-  start = teacher_id*chunk_size
-  chunk = all_files[start:start+chunk_size]
-
-  params = dict()
-  params['batch_size'] = config['batch_size']
-  params['src_files'] = chunk
-  params['major'] = 'users'
-  params['itemIdInd'] = 1
-  params['userIdInd'] = 0
-  print("Loading Training Data")
-  data_layer = new_input_layer.UserItemRecDataProviderNew(params=params,
-                                                          user_id_map=userIdMap,
-                                                          item_id_map=itemIdMap)
-  print("Data loaded")
-  print("Total items found: {}".format(len(data_layer.data.keys())))
-  print("Vector dim: {}".format(data_layer.vector_dim))
-
-  print("Loading eval data")
-  eval_params = copy.deepcopy(params)
-  del eval_params['src_files']
-  # must set eval batch size to 1 to make sure no examples are missed
-  eval_params['data_dir'] = nf_eval_data_dir
-  eval_data_layer = input_layer.UserItemRecDataProvider(params=eval_params,
-                                                       user_id_map=userIdMap,
-                                                       item_id_map=itemIdMap)
-
-  eval_data_layer.src_data = src_data_layer.data
-
-  rencoder = model.AutoEncoder(layer_sizes=[data_layer.vector_dim] +
-                                            [int(l) for l in config['hidden_layers'].split(',')],
-                               nl_type=config['non_linearity_type'],
-                               is_constrained=config['constrained'],
-                               dp_drop_prob=config['drop_prob'],
-                               last_layer_activations=config['skip_last_layer_nl'])
-  os.makedirs(config['logdir'], exist_ok=True)
-  model_checkpoint = config['logdir'] + "/model_%s_%s" % (nb_teachers,
-                                                          teacher_id)
-  path_to_model = Path(model_checkpoint)
-  if path_to_model.is_file():
-    print("Loading model from: {}".format(model_checkpoint))
-    rencoder.load_state_dict(torch.load(model_checkpoint))
-
-  print('######################################################')
-  print('######################################################')
-  print('############# AutoEncoder Model: #####################')
-  print(rencoder)
-  print('######################################################')
-  print('######################################################')
-
-  gpu_ids = [int(g) for g in config['gpu_ids'].split(',')]
-  print('Using GPUs: {}'.format(gpu_ids))
-  if len(gpu_ids)>1:
-    rencoder = nn.DataParallel(rencoder,
-                               device_ids=gpu_ids)
-
-  if use_gpu: rencoder = rencoder.cuda()
-
-  if config['optimizer'] == "adam":
-    optimizer = optim.Adam(rencoder.parameters(),
-                           lr=config['lr'],
-                           weight_decay=config['weight_decay'])
-  elif config['optimizer'] == "adagrad":
-    optimizer = optim.Adagrad(rencoder.parameters(),
-                              lr=config['lr'],
-                              weight_decay=config['weight_decay'])
-  elif config['optimizer'] == "momentum":
-    optimizer = optim.SGD(rencoder.parameters(),
-                          lr=config['lr'], momentum=0.9,
-                          weight_decay=config['weight_decay'])
-    scheduler = MultiStepLR(optimizer, milestones=[24, 36, 48, 66, 72], gamma=0.5)
-  elif config['optimizer'] == "rmsprop":
-    optimizer = optim.RMSprop(rencoder.parameters(),
-                              lr=config['lr'], momentum=0.9,
-                              weight_decay=config['weight_decay'])
-  else:
-    raise  ValueError('Unknown optimizer kind')
-
-  t_loss = 0.0
-  t_loss_denom = 0.0
-  global_step = 0
-
-  if config['noise_prob'] > 0.0:
-    dp = nn.Dropout(p=config['noise_prob'])
-
-  for epoch in range(config['num_epochs']):
-    print('Doing epoch {} of {}'.format(epoch, config['num_epochs']))
-    e_start_time = time.time()
-    rencoder.train()
-    total_epoch_loss = 0.0
-    denom = 0.0
-    if config['optimizer'] == "momentum":
-      scheduler.step()
-    for i, mb in enumerate(data_layer.iterate_one_epoch()):
-      inputs = Variable(mb.cuda().to_dense() if use_gpu else mb.to_dense())
-      optimizer.zero_grad()
-      outputs = rencoder(inputs)
-      loss, num_ratings = model.MSEloss(outputs, inputs)
-      loss = loss / num_ratings
-      loss.backward()
-      optimizer.step()
-      global_step += 1
-      t_loss += torch.Tensor.item(loss.data)
-      t_loss_denom += 1
-
-      if i % config['summary_frequency'] == 0:
-        print('[%d, %5d] RMSE: %.7f' % (epoch, i, sqrt(t_loss / t_loss_denom)))
-        logger.scalar_summary("Training_RMSE", sqrt(t_loss/t_loss_denom), global_step)
-        t_loss = 0
-        t_loss_denom = 0.0
-        log_var_and_grad_summaries(logger, rencoder.encode_w, global_step, "Encode_W")
-        log_var_and_grad_summaries(logger, rencoder.encode_b, global_step, "Encode_b")
-        if not rencoder.is_constrained:
-          log_var_and_grad_summaries(logger, rencoder.decode_w, global_step, "Decode_W")
-        log_var_and_grad_summaries(logger, rencoder.decode_b, global_step, "Decode_b")
-
-      total_epoch_loss += torch.Tensor.item(loss.data)
-      denom += 1
-
-      #if config['aug_step'] > 0 and i % config['aug_step'] == 0 and i > 0:
-      if config['aug_step'] > 0:
-        # Magic data augmentation trick happen here
-        for t in range(config['aug_step']):
-          inputs = Variable(outputs.data)
-          if config['noise_prob'] > 0.0:
-            inputs = dp(inputs)
-          optimizer.zero_grad()
-          outputs = rencoder(inputs)
-          loss, num_ratings = model.MSEloss(outputs, inputs)
-          loss = loss / num_ratings
-          loss.backward()
-          optimizer.step()
-
-    e_end_time = time.time()
-    print('Total epoch {} finished in {} seconds with TRAINING RMSE loss: {}'
-          .format(epoch, e_end_time - e_start_time, sqrt(total_epoch_loss/denom)))
-    logger.scalar_summary("Training_RMSE_per_epoch", sqrt(total_epoch_loss/denom), epoch)
-    logger.scalar_summary("Epoch_time", e_end_time - e_start_time, epoch)
-    if epoch == config['num_epochs'] - 1:
-      eval_loss = do_eval(rencoder, eval_data_layer)
-      print('Epoch {} EVALUATION LOSS: {}'.format(epoch, eval_loss))
-      logger.scalar_summary("EVALUATION_RMSE", eval_loss, epoch)
-
-  print("Saving model to {}".format(model_checkpoint + ".last"))
-  torch.save(rencoder.state_dict(), model_checkpoint + ".last")
-
-  return True
-
-def softmax_preds(model_path):
-  """
-  Compute softmax activations (probabilities) with the model saved in the path
-  specified as an argument
-  :param images: a np array of images
-  :param ckpt_path: a pytorch model checkpoint
-  :param logits: if set to True, return logits instead of probabilities
-  :return: probabilities (or logits if logits is set to True)
-  """
   # Compute nb samples and deduce nb of batches
   data_length = len(stud_train_data_layer.data.keys())
   vector_length = stud_train_data_layer._vector_dim
+  print("shape: (%s, %s)" %(data_length, vector_length))
 
-  # Will hold the result
-  preds = np.zeros((data_length, vector_length), dtype=np.float32)
+  # Will hold the tmp result
+  preds = np.memmap('/data/Netflix/memmaps/preds_%s.dat.tmp' % teacher_id,
+                    dtype=np.float32, mode='w+', shape=(data_length,
+                                                        vector_length))
+
   #num features varies depending on what items were in its training data
   rencoder = model.AutoEncoder(layer_sizes=[vector_length] +
                                             [int(l) for l in config['hidden_layers'].split(',')],
@@ -298,6 +201,8 @@ def softmax_preds(model_path):
 
   rencoder.load_state_dict(torch.load(model_path))
   rencoder.eval()
+  if use_gpu:
+    rencoder.cuda()
 
   # Parse data by batch
   for i, mb in enumerate(stud_train_data_layer.iterate_one_epoch(do_shuffle=False)):
@@ -306,6 +211,14 @@ def softmax_preds(model_path):
     end = (i+1)*config['batch_size']
 
     # Prepare feed dictionary
-    preds[start:end, :] = rencoder(inputs)
+    preds[start:end, :] = rencoder(inputs).cpu().detach().numpy()
 
-  return preds
+  final_preds = np.memmap('/data/Netflix/memmaps/preds_%s.dat' % teacher_id,
+                         dtype=np.int8, mode='w+', shape=(data_length,
+                                                          vector_length))
+  final_preds[:,:] = np.rint(preds.clip(min=1, max=5))
+  del preds
+  gc.collect()
+  os.remove('/data/Netflix/memmaps/preds_%s.dat.tmp' % teacher_id)
+
+  return final_preds

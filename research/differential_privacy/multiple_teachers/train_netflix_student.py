@@ -20,7 +20,6 @@ from __future__ import print_function
 
 import numpy as np
 from six.moves import xrange
-import tensorflow as tf
 
 import netflix_aggregation as nagg
 import input
@@ -45,29 +44,15 @@ from math import sqrt, floor
 import numpy as np
 import os
 from os import listdir, path
+from random import shuffle
 
 
-FLAGS = tf.flags.FLAGS
-
-tf.flags.DEFINE_string('train_dir','./model_save/netflix','Where model chkpt are saved')
-tf.flags.DEFINE_string('teachers_dir','./model_save/netflix/',
-                       'Directory where teachers checkpoints are stored.')
-tf.flags.DEFINE_integer('nb_teachers', 10, 'Teachers in the ensemble.')
-tf.flags.DEFINE_integer('lap_scale', 10,
-                        'Scale of the Laplacian noise added for privacy')
+train_dir = './model_save/netflix'
+teachers_dir = './model_save/netflix/'
+nb_teachers = 10
+lap_scale = 10
 
 def ensemble_preds(nb_teachers):
-  """
-  Given a dataset, a number of teachers, and some input data, this helper
-  function queries each teacher for predictions on the data and returns
-  all predictions in a single array. (That can then be aggregated into
-  one single prediction per input using aggregation.py (cf. function
-  prepare_student_data() below)
-  :param dataset: string corresponding to mnist, cifar10, or svhn
-  :param nb_teachers: number of teachers (in the ensemble) to learn from
-  :param stdnt_data: unlabeled student training data
-  :return: 3d array (teacher id, sample id, probability per class)
-  """
 
   # Compute shape of array that will hold probabilities produced by each
   # teacher, for each training point, and each output class
@@ -76,16 +61,16 @@ def ensemble_preds(nb_teachers):
                   dr.stud_train_data_layer._vector_dim)
 
   # Create array that will hold result
-  result = np.memmap('results.dat', dtype=np.int32,
+  result = np.memmap('/data/Netflix/memmaps/results.dat', dtype=np.int8,
                      mode='w+',shape=result_shape)
 
   # Get predictions from each teacher
   for teacher_id in xrange(nb_teachers):
     # Compute path of checkpoint file for teacher model with ID teacher_id
-    model_path = FLAGS.teachers_dir + '/' 'model_' + str(nb_teachers) + '_' + str(teacher_id) + '.last'  # NOLINT(long-line)
+    model_path = teachers_dir + '/model_' + str(nb_teachers) + '_' + str(teacher_id) + '.last'  # NOLINT(long-line)
 
     # Get predictions on our training data and store in result array
-    result[teacher_id] = dr.softmax_preds(model_path)
+    result[teacher_id] = dr.teacher_preds(model_path, teacher_id)
 
     # This can take a while when there are a lot of teachers so output status
     print("Computed Teacher " + str(teacher_id) + " softmax predictions")
@@ -95,8 +80,9 @@ def ensemble_preds(nb_teachers):
 def iterate_one_epoch(data_layer, results):
   data = data_layer.data
   keys = list(data.keys())
+  shuffle(keys)
   s_ind = 0
-  e_ind = self._batch_size
+  e_ind = data_layer._batch_size
   while e_ind < len(keys):
     local_ind = 0
     inds1 = []
@@ -111,44 +97,64 @@ def iterate_one_epoch(data_layer, results):
     i_torch = torch.LongTensor([inds1, inds2])
     v_torch = torch.FloatTensor(vals)
 
-    mini_batch = torch.sparse.FloatTensor(i_torch, v_torch, torch.Size([self._batch_size, self._vector_dim]))
-    mini_batch_labels = torch.tensor(results[s_ind, e_ind])
-    s_ind += self._batch_size
-    e_ind += self._batch_size
-    yield  mini_batch, mini_batch_labels
+    mini_batch = torch.sparse.FloatTensor(i_torch, v_torch,
+                                          torch.Size([data_layer._batch_size,
+                                                      data_layer._vector_dim]))
+    mini_batch_labels = torch.from_numpy(results[s_ind:e_ind])
+#    mini_batch_labels = torch.tensor(results[s_ind:e_ind])
+    s_ind += data_layer._batch_size
+    e_ind += data_layer._batch_size
+    yield (mini_batch, mini_batch_labels)
 
 def train_student(nb_teachers):
   """
   This function trains a student using predictions made by an ensemble of
   teachers. The student and teacher models are trained using the same
   neural network architecture.
-  :param dataset: string corresponding to mnist, cifar10, or svhn
   :param nb_teachers: number of teachers (in the ensemble) to learn from
   :return: True if student training went well
   """
-  assert input.create_dir_if_needed(FLAGS.train_dir)
+  assert input.create_dir_if_needed(train_dir)
 
+  dr.load_maps()
+  dr.load_train_data_layer()
   predictions = ensemble_preds(nb_teachers)
-  labels = nagg.noisy_max(predictions, FLAGS.lap_scale)
+  #print("%s, %s, %s" % (nb_teachers, len(dr.stud_train_data_layer.data.keys()),
+  #                      dr.stud_train_data_layer._vector_dim))
 
+  #predictions = np.memmap('/data/Netflix/memmaps/results.dat', dtype=np.int8,
+  #                        shape=(nb_teachers,
+  #                               len(dr.stud_train_data_layer.data.keys()),
+  #                               dr.stud_train_data_layer._vector_dim), mode='r')
+  labels = nagg.noisy_max(predictions, lap_scale)
+
+  #labels = np.memmap('/data/Netflix/memmaps/results_.dat', dtype=np.float32,
+  #                   shape=(len(dr.stud_train_data_layer.data.keys()),
+  #                          dr.stud_train_data_layer._vector_dim), mode='r')
+
+  #IN THE ABOVE: it is recommended to run each one at a time - have predictions
+  #save to its memmap file, then load it up in the next run to calculate labels.
+  #Then again load the labels from file to carry on with the rest of training.
+  #This is due to bugs in memory from trying to go directly from one step to the
+  #next
 
   # Prepare checkpoint filename and path
-  model_path = FLAGS.train_dir + '/' 'model_' + str(nb_teachers) + '_' + str(teacher_id) + '_student.last'  # NOLINT(long-line)
+  model_path = train_dir + '/' 'model_' + str(nb_teachers) + '_student.last'  # NOLINT(long-line)
 
-  rencoder = model.AutoEncoder(layer_sizes=[data_layer._vector_dim] +
+  rencoder = model.AutoEncoder(layer_sizes=[dr.stud_train_data_layer._vector_dim] +
                                             [int(l) for l in dr.config['hidden_layers'].split(',')],
                                nl_type=dr.config['non_linearity_type'],
                                is_constrained=dr.config['constrained'],
                                dp_drop_prob=dr.config['drop_prob'],
                                last_layer_activations=dr.config['skip_last_layer_nl'])
 
-  gpu_ids = [int(g) for g in dr.config['gpu_ids'].gpu_ids.split(',')]
+  gpu_ids = [int(g) for g in dr.config['gpu_ids'].split(',')]
   print('Using GPUs: {}'.format(gpu_ids))
   if len(gpu_ids)>1:
     rencoder = nn.DataParallel(rencoder,
                                device_ids=gpu_ids)
 
-  if use_gpu: rencoder = rencoder.cuda()
+  if dr.use_gpu: rencoder = rencoder.cuda()
 
   if dr.config['optimizer'] == "adam":
     optimizer = optim.Adam(rencoder.parameters(),
@@ -189,9 +195,12 @@ def train_student(nb_teachers):
     if dr.config['optimizer'] == "momentum":
       scheduler.step()
 
-    for (i, mb), labels in enumerate(iterate_one_epoch(dr.stud_train_data_layer, labels)):
-      inputs = Variable(mb.cuda().to_dense() if use_gpu else mb.to_dense())
-      consensus = Variable(labels.cuda() if use_gpu else labels)
+    num_batches = int(len(labels)/dr.config['batch_size'])
+    for i, (mb, new_labels) in enumerate(iterate_one_epoch(dr.stud_train_data_layer, labels)):
+      if i % 100 == 0:
+        print("batch %s out of %s" % (i,num_batches))
+      inputs = Variable(mb.cuda().to_dense() if dr.use_gpu else mb.to_dense())
+      consensus = Variable(new_labels.cuda() if dr.use_gpu else new_labels)
       optimizer.zero_grad()
       outputs = rencoder(inputs)
       # define consensus
@@ -219,16 +228,20 @@ def train_student(nb_teachers):
           loss = loss / num_ratings
           loss.backward()
           optimizer.step()
-
     e_end_time = time.time()
-    torch.save(rencoder.state_dict(), model_path)
-    print("STUDENT TRAINED")
+    print('Total epoch {} finished in {} seconds with TRAINING RMSE loss: {}'
+          .format(epoch, e_end_time - e_start_time, sqrt(total_epoch_loss/denom)))
+
+  torch.save(rencoder.state_dict(), model_path)
+  print("STUDENT TRAINED")
 
   return True
 
 def main(argv=None): # pylint: disable=unused-argument
   # Run student training according to values specified in flags
-  assert train_student(FLAGS.nb_teachers)
+  dr.load_maps()
+  dr.load_train_data_layer()
+  assert train_student(nb_teachers)
 
 if __name__ == '__main__':
-  tf.app.run()
+  main()

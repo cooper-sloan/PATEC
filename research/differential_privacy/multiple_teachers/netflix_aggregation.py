@@ -20,6 +20,7 @@ from __future__ import print_function
 
 import numpy as np
 from six.moves import xrange
+from numba import njit, prange
 
 
 def labels_from_probs(probs):
@@ -38,6 +39,7 @@ def labels_from_probs(probs):
 
   # Return as np.int32
   return np.asarray(labels, dtype=np.int32)
+
 
 
 def noisy_max(predictions, lap_scale, return_clean_votes=False):
@@ -60,45 +62,29 @@ def noisy_max(predictions, lap_scale, return_clean_votes=False):
 
   # Initialize array to hold final labels
   pred_shape = np.shape(predictions)
-  result = np.zeros((pred_shape[1], pred_shape[2]))
 
-  if return_clean_votes:
-    # Initialize array to hold clean votes for each sample
-    clean_votes = np.zeros((5, pred_shape[1], pred_shape[2]))
+  new_result = np.memmap('/data/Netflix/memmaps/results_.dat', dtype=np.float32,
+                         shape=(pred_shape[1], pred_shape[2]), mode='w+')
 
-  # Parse each sample
-  for i in xrange(pred_shape[1]):
-    # Count number of votes assigned to each class
-    if (i % 100 == 0):
-      print("Aggregated results from users %s to %s" % (i-99, i))
-    for j in xrange(pred_shape[2]):
-      label_counts = np.bincount(predictions[:,i,j], minlength=6)[1:6]
+  holder = np.zeros((pred_shape[0], pred_shape[2]), dtype=np.int8)
+  holder2 = np.zeros((5, pred_shape[2]), dtype=np.float32)
 
-      if return_clean_votes:
-        clean_votes[:,i,j] = label_counts
+  for i in range(pred_shape[1]):
+      if i % 100 == 0:
+        print(i)
+      holder[:,:] = predictions[:,i,:]
+      bincount2D_numba_func(holder, holder2, pred_shape[0], pred_shape[2])
+      holder2 += np.random.laplace(loc=0.0, scale=float(lap_scale), size=(5,
+      pred_shape[2]))
+      new_result[i,:] = np.argmax(holder2, axis=0)
 
-      # Cast in float32 to prepare before addition of Laplacian noise
-      label_counts = np.asarray(label_counts, dtype=np.float32)
+  return new_result
 
-      # Sample independent Laplacian noise for each class
-      for item in xrange(5):
-        label_counts[item] += np.random.laplace(loc=0.0, scale=float(lap_scale))
-
-      # Result is the most frequent label
-      result[i,j] = np.argmax(label_counts) + 1
-
-  # Cast labels to np.int32 for compatibility with deep_cnn.py feed dictionaries
-  result = np.asarray(result, dtype=np.int32)
-
-  if return_clean_votes:
-    # Returns several array, which are later saved:
-    # result: labels obtained from the noisy aggregation
-    # clean_votes: the number of teacher votes assigned to each sample and class
-    return result, clean_votes
-  else:
-    # Only return labels resulting from noisy aggregation
-    return result
-
+@njit(parallel=True)
+def bincount2D_numba_func(a, out, m, n):
+    for i in prange(m):
+      for j in prange(n):
+        out[a[i,j],j] += 1
 
 def aggregation_most_frequent(predictions):
   """
